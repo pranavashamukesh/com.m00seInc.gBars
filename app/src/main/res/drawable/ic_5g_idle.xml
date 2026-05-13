@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- The '5' Hollow -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M3,7h8v1.5H4.5v4H9c0.8,0 1.5,0.7 1.5,1.5v3c0,0.8 -0.7,1.5 -1.5,1.5H3v-1.5h6v-3H3V7z M4.5,8.5v1.5h5v-1.5H4.5z" />
+    <!-- The 'G' Hollow -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M13,9c0,-0.8 0.7,-1.5 1.5,-1.5h6.5v1.5h-6.5v6h5v-2h-2v-1.5h3.5v5h-6.5c-0.8,0 -1.5,-0.7 -1.5,-1.5V9z" />
+</vector>
