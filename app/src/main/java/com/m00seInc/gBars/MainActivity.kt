@@ -343,7 +343,7 @@ fun MainDashboard() {
 fun AppBranding() {
     Column(modifier = Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.Start) {
         Text("GBARS", fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 5.sp)
-        Text("V1.4.3 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+        Text("V1.4.4 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
     }
 }
 
