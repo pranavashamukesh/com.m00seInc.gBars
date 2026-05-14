@@ -26,7 +26,6 @@ data class NetworkLog(@SerializedName("dateTime") val dateTime: String,
 class NetworkMonitor(private val context: Context) {
 
     private val tag = "gBars_NetworkMonitor"
-    private val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private val prefs = context.getSharedPreferences("gbars_storage", Context.MODE_PRIVATE)
 
     private val _networkMode = MutableStateFlow("Initializing...")
@@ -96,6 +95,7 @@ class NetworkMonitor(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun pokeHardwareOnly() {
         try {
+            val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
             // 1. The Universal Nudge (API 1+)
             // Accessing the serviceState property triggers the Binder IPC
             // call that refreshes the modem's internal state machine.
@@ -194,6 +194,7 @@ class NetworkMonitor(private val context: Context) {
         Log.w(TAG, "start Monitoring")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && telephonyCallback != null) {
             try {
+                val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
                 telephonyManager.registerTelephonyCallback(executor, telephonyCallback)
                 checkInitialState()
                 if (isNewSession) createInitialPendingRow()
@@ -206,6 +207,7 @@ class NetworkMonitor(private val context: Context) {
     @SuppressLint("MissingPermission")
     public fun checkInitialState() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
             val serviceState = telephonyManager.serviceState
             updateNetworkType(null, serviceState)
         }
@@ -239,6 +241,7 @@ class NetworkMonitor(private val context: Context) {
     fun stopMonitoring() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && telephonyCallback != null) {
             Log.d("gBars_Monitor", "TelephonyCallback unregistered and nullified.")
+            val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
             telephonyManager.unregisterTelephonyCallback(telephonyCallback)
         }
         else Log.d("gBars_Monitor", "TelephonyCallback null")

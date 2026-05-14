@@ -226,7 +226,7 @@ class NetworkMonitorService : Service() {
         )
         val isRefreshMode = AppState.activeMode.value == AppMode.REFRESH
         return NotificationCompat.Builder(this, channelId)
-            .setContentText(if (isRefreshMode) "REFRESH - v1.4.3 \\ STABLE" else "MONITOR - v1.4.3 \\ STABLE")
+            .setContentText(if (isRefreshMode) "REFRESH - v1.4.4 \\ STABLE" else "MONITOR - v1.4.4 \\ STABLE")
             .setSmallIcon(getIconForMode(mode))
             .setOngoing(!isRefreshMode)
             .setSilent(true)
