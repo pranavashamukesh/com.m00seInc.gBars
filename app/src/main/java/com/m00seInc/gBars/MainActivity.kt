@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -53,16 +54,16 @@ object AppState {
     private val persistenceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val diskMutex = Mutex() // Prevents simultaneous read/writes
     val gson = Gson()
-
     val activeMode = mutableStateOf(AppMode.MONITORING)
     val currentLogs = mutableStateListOf<NetworkLog>()
     val currentNetworkMode = mutableStateOf("Disconnected")
     val isServiceRunning = mutableStateOf(false)
     val isInitialized = mutableStateOf(false)
     val pokeHistory = mutableStateListOf<PokeEntry>()
-
     private var hasLoadedFromDisk = false
-
+    // THE BRIDGE: Holds the actual hardware listener object across service restarts
+    var persistentTelephonyCallback: Any? = null
+    var persistentNetworkCallback: ConnectivityManager.NetworkCallback? = null
     fun checkPermissions(context: Context): Boolean {
         val permissions = mutableListOf(
             Manifest.permission.READ_PHONE_STATE,
@@ -108,9 +109,9 @@ object AppState {
             }
         }
     }
-    fun loadLogsFromPrefs(context: Context) {
+    fun loadLogsFromPrefs(context: Context, onComplete: () -> Unit = {}) {
         val appContext = context.applicationContext
-        runBlocking {
+        persistenceScope.launch{
             diskMutex.withLock {
                 try {
                     val prefs = appContext.getSharedPreferences("gbars_storage", Context.MODE_PRIVATE)
@@ -142,10 +143,14 @@ object AppState {
                     // CRITICAL: Only set this to true AFTER everything is in RAM
                     hasLoadedFromDisk = true
                     Log.d("gBars_Persistence", "Load Complete. Guard Disarmed.")
+                    // Switch back to Main thread to notify the UI
+                    withContext(Dispatchers.Main) {
+                        onComplete()
+                    }
                 } catch (e: Exception) {
                     Log.e("gBars_Persistence", "Load Failed: ${e.message}")
-                    // Even on failure, we set this to true so the user can start a fresh history
                     hasLoadedFromDisk = true
+                    withContext(Dispatchers.Main) { onComplete() }
                 }
             }
         }
@@ -169,9 +174,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        AppState.loadLogsFromPrefs(this)
-        AppState.isInitialized.value = AppState.checkPermissions(this)
-
+        // Load asynchronously
+        AppState.loadLogsFromPrefs(this) {
+            // This runs after the data is loaded
+            AppState.isInitialized.value = AppState.checkPermissions(this)
+        }
         setContent {
             GBarsTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -343,7 +350,7 @@ fun MainDashboard() {
 fun AppBranding() {
     Column(modifier = Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.Start) {
         Text("GBARS", fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 5.sp)
-        Text("V1.4.4 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+        Text("V1.4.5 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
     }
 }
 

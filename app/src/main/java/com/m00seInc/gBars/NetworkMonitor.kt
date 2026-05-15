@@ -195,7 +195,19 @@ class NetworkMonitor(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && telephonyCallback != null) {
             try {
                 val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+                // 1. REACH ACROSS THE BRIDGE: If a listener from an OLD service instance
+                // is still alive in the System Server, kill it now.
+                (AppState.persistentTelephonyCallback as? TelephonyCallback)?.let { oldCallback ->
+                    try {
+                        telephonyManager.unregisterTelephonyCallback(oldCallback)
+                        Log.d("gBars_Monitor", "Identity Bridge: Zombie listener cleared.")
+                    } catch (e: Exception) { /* Ignore unregister errors */ }
+                }
+
                 telephonyManager.registerTelephonyCallback(executor, telephonyCallback)
+                AppState.persistentTelephonyCallback = telephonyCallback
+
                 checkInitialState()
                 if (isNewSession) createInitialPendingRow()
             } catch (e: Exception) {
@@ -239,11 +251,20 @@ class NetworkMonitor(private val context: Context) {
     }
 
     fun stopMonitoring() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && telephonyCallback != null) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Log.d("gBars_Monitor", "TelephonyCallback unregistered and nullified.")
             val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-            telephonyManager.unregisterTelephonyCallback(telephonyCallback)
+            // 3. ALWAYS unregister the identity stored in the bridge,
+            // not just the local one.
+            (AppState.persistentTelephonyCallback as? TelephonyCallback)?.let { activeCallback ->
+                try {
+                    telephonyManager.unregisterTelephonyCallback(activeCallback)
+                    AppState.persistentTelephonyCallback = null // Clear the bridge
+                    Log.d("gBars_Monitor", "Identity Bridge: Modem detached successfully.")
+                } catch (e: Exception) {
+                    Log.e("gBars_Monitor", "Identity Bridge: Detach failed: ${e.message}")
+                }
+            }?: Log.d("gBars_Monitor", "Identity Bridge: Nothing to unregister.")
         }
-        else Log.d("gBars_Monitor", "TelephonyCallback null")
     }
 }
