@@ -48,8 +48,8 @@ class NetworkMonitorService : Service() {
     private var isCellularDataActive = false
 
     private var lastPokeTime = 0L
-    //private val REFRESH_COOLDOWN_MS = 3_600_000L // 1 Hour
-    private val REFRESH_COOLDOWN_MS = 60_000L // 30 sec for testing
+    private val REFRESH_COOLDOWN_MS = 3_600_000L // 1 Hour
+    //private val REFRESH_COOLDOWN_MS = 60_000L // 30 sec for testing
     private var heartbeatJob: Job? = null
 
     private fun manageHeartbeat(start: Boolean) {
@@ -60,6 +60,12 @@ class NetworkMonitorService : Service() {
             heartbeatJob = serviceScope.launch {
                 while (true) {
                     delay(5000)
+                    // ZOMBIE CHECK: Terminate this coroutine loop if a newer service has started
+                    if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) {
+                        Log.w(tag, "Zombie heartbeat loop detected (${this@NetworkMonitorService.hashCode()}). Terminating.")
+                        heartbeatJob?.cancel()
+                        return@launch
+                    }
                     if (isDeviceUnlocked) {
                         networkMonitor.checkInitialState()
                         updateNotification(lastKnownMode)
@@ -72,11 +78,13 @@ class NetworkMonitorService : Service() {
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) return
             isCellularDataActive = true
             Log.d("gBars_Network", "Cellular Data Available")
         }
 
         override fun onLost(network: Network) {
+            if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) return
             isCellularDataActive = false
             Log.d("gBars_Network", "Cellular Data Lost/Disabled")
         }
@@ -84,6 +92,12 @@ class NetworkMonitorService : Service() {
 
     private val lockStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            // ZOMBIE CHECK: If I am an old instance, kill this receiver and exit
+            if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) {
+                Log.w(tag, "Zombie receiver detected (${this@NetworkMonitorService.hashCode()}). Evicting.")
+                try { context?.unregisterReceiver(this) } catch (e: Exception) {}
+                return
+            }
             pendingPokeJob?.cancel()
             //val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             when (intent?.action) {
@@ -138,8 +152,11 @@ class NetworkMonitorService : Service() {
     }
 
     override fun onCreate() {
+        Log.d("gBars_RaceCheck", "[Main Thread] onCreate entry - Current activeMode in RAM: ${AppState.activeMode.value}")
         super.onCreate()
-        Log.i(tag, "Service Instance Created: ${this.hashCode()}")
+        // Register this instance as the single source of truth
+        AppState.activeServiceHash = this.hashCode()
+        Log.i(tag, "Service Instance Created: ${this.hashCode()}. Claimed active status.")
         // FIX: Promote to Foreground immediately in onCreate to avoid
         // background-start restrictions if the screen locks during transition.
         createNotificationChannel()
@@ -213,6 +230,7 @@ class NetworkMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d("gBars_RaceCheck", "[Main Thread] onStartCommand entry - Current activeMode in RAM: ${AppState.activeMode.value}")
         lastStartId = startId
 
         if (AppState.activeMode.value == AppMode.REFRESH) {
@@ -245,9 +263,9 @@ class NetworkMonitorService : Service() {
         )
         val isRefreshMode = AppState.activeMode.value == AppMode.REFRESH
         return NotificationCompat.Builder(this, channelId)
-            .setContentText(if (isRefreshMode) "REFRESH - v1.4.5 \\ STABLE" else "MONITOR - v1.4.5 \\ STABLE")
+            .setContentText(if (isRefreshMode) "REFRESH - v1.4.6.1 \\ STABLE" else "MONITOR - v1.4.6.1 \\ STABLE")
             .setSmallIcon(getIconForMode(mode))
-            .setOngoing(!isRefreshMode)
+            .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(Notification.CATEGORY_SERVICE)

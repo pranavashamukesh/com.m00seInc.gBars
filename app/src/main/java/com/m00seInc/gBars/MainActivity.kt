@@ -61,6 +61,8 @@ object AppState {
     val isInitialized = mutableStateOf(false)
     val pokeHistory = mutableStateListOf<PokeEntry>()
     private var hasLoadedFromDisk = false
+    // Tracks the hashcode of the true, active service instance
+    var activeServiceHash: Int = -1
     // THE BRIDGE: Holds the actual hardware listener object across service restarts
     var persistentTelephonyCallback: Any? = null
     var persistentNetworkCallback: ConnectivityManager.NetworkCallback? = null
@@ -118,7 +120,9 @@ object AppState {
 
                     // Load Mode
                     val savedMode = prefs.getString("active_mode", AppMode.MONITORING.name)
+                    Log.d("gBars_RaceCheck", "[Disk Thread] Raw string read from SharedPreferences: $savedMode")
                     activeMode.value = try { AppMode.valueOf(savedMode!!) } catch(e: Exception) { AppMode.MONITORING }
+                    Log.d("gBars_RaceCheck", "[Disk Thread] AppState.activeMode adjusted to: ${activeMode.value}")
 
                     // Load Poke History
                     val historyJson = prefs.getString("poke_history_json", null)
@@ -350,7 +354,7 @@ fun MainDashboard() {
 fun AppBranding() {
     Column(modifier = Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.Start) {
         Text("GBARS", fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 5.sp)
-        Text("V1.4.5 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+        Text("V1.4.6.1 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
     }
 }
 
