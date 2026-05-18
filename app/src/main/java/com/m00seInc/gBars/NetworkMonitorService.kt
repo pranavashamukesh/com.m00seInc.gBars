@@ -49,13 +49,42 @@ class NetworkMonitorService : Service() {
 
     private var lastPokeTime = 0L
     private val REFRESH_COOLDOWN_MS = 3_600_000L // 1 Hour
+    //private val REFRESH_COOLDOWN_MS = 60_000L // 30 sec for testing
+    private var heartbeatJob: Job? = null
+
+    private fun manageHeartbeat(start: Boolean) {
+        heartbeatJob?.cancel() // Kill any existing ghost loop immediately
+        heartbeatJob = null
+
+        if (start) {
+            heartbeatJob = serviceScope.launch {
+                while (true) {
+                    delay(5000)
+                    // ZOMBIE CHECK: Terminate this coroutine loop if a newer service has started
+                    if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) {
+                        Log.w(tag, "Zombie heartbeat loop detected (${this@NetworkMonitorService.hashCode()}). Terminating.")
+                        heartbeatJob?.cancel()
+                        return@launch
+                    }
+                    if (isDeviceUnlocked) {
+                        networkMonitor.checkInitialState()
+                        updateNotification(lastKnownMode)
+                        Log.d(tag, "Heartbeat Loop: Active.")
+                    }
+                }
+            }
+        }
+    }
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) return
             isCellularDataActive = true
             Log.d("gBars_Network", "Cellular Data Available")
         }
 
         override fun onLost(network: Network) {
+            if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) return
             isCellularDataActive = false
             Log.d("gBars_Network", "Cellular Data Lost/Disabled")
         }
@@ -63,10 +92,17 @@ class NetworkMonitorService : Service() {
 
     private val lockStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            // ZOMBIE CHECK: If I am an old instance, kill this receiver and exit
+            if (AppState.activeServiceHash != this@NetworkMonitorService.hashCode()) {
+                Log.w(tag, "Zombie receiver detected (${this@NetworkMonitorService.hashCode()}). Evicting.")
+                try { context?.unregisterReceiver(this) } catch (e: Exception) {}
+                return
+            }
             pendingPokeJob?.cancel()
             //val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(tag, "Phone Locked")
                     pendingPokeJob?.cancel()
                     isDeviceUnlocked = false
                     if (AppState.activeMode.value == AppMode.MONITORING) {
@@ -76,6 +112,7 @@ class NetworkMonitorService : Service() {
                 }
 
                 Intent.ACTION_SCREEN_ON -> {
+                    Log.d(tag, "Phone Unlocked")
                     isDeviceUnlocked = true
                     val currentTime = System.currentTimeMillis()
 
@@ -87,7 +124,7 @@ class NetworkMonitorService : Service() {
                     }
                     // 2. Handle REFRESH Mode separately
                     else {
-                        if ((currentTime - lastPokeTime > REFRESH_COOLDOWN_MS)|| lastPokeTime == 0L) {
+                        if ((currentTime - lastPokeTime > REFRESH_COOLDOWN_MS)) {
                             if (pendingPokeJob?.isCompleted ?: true) {
                                 pendingPokeJob = serviceScope.launch {
                                     delay(2000)
@@ -99,7 +136,9 @@ class NetworkMonitorService : Service() {
                                             "dd/MM/yyyy HH:mm:ss",
                                             java.util.Locale.getDefault()
                                         ).format(java.util.Date()))
+                                        Log.d(tag, "MODEM poked @ $lastPokeTime")
                                     }
+                                    else Log.d(tag, "cellular data disabled @ $lastPokeTime")
                                 }
                             }
                         } else {
@@ -113,17 +152,26 @@ class NetworkMonitorService : Service() {
     }
 
     override fun onCreate() {
+        Log.d("gBars_RaceCheck", "[Main Thread] onCreate entry - Current activeMode in RAM: ${AppState.activeMode.value}")
         super.onCreate()
+        // Register this instance as the single source of truth
+        AppState.activeServiceHash = this.hashCode()
+        Log.i(tag, "Service Instance Created: ${this.hashCode()}. Claimed active status.")
         // FIX: Promote to Foreground immediately in onCreate to avoid
         // background-start restrictions if the screen locks during transition.
         createNotificationChannel()
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        // 1. KILL any zombie network listener from a previous instance
+        AppState.persistentNetworkCallback?.let { oldCallback ->
+            try { connectivityManager.unregisterNetworkCallback(oldCallback) } catch(e: Exception) {}
+        }
         val notification = buildNotification(lastKnownMode)
         try {
             val request = NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
                 .build()
             connectivityManager.registerNetworkCallback(request, networkCallback)
+            AppState.persistentNetworkCallback = networkCallback // Store in bridge
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
                     notificationId,
@@ -152,19 +200,7 @@ class NetworkMonitorService : Service() {
         if (AppState.activeMode.value == AppMode.MONITORING) {
             // 1. Core update flow
             startUpdateLoop()
-
-            // 2. Refinement: Gated 5-Second Heartbeat
-            serviceScope.launch {
-                while (true) {
-                    delay(5000)
-                    // Only refresh if the user is present/unlocked
-                    if (isDeviceUnlocked) {
-                        networkMonitor.checkInitialState()
-                        updateNotification(lastKnownMode)
-                        Log.d(tag, "Notification Heartbeat: Refreshed.")
-                    }
-                }
-            }
+            manageHeartbeat(true)
         }
     }
 
@@ -194,17 +230,18 @@ class NetworkMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d("gBars_RaceCheck", "[Main Thread] onStartCommand entry - Current activeMode in RAM: ${AppState.activeMode.value}")
         lastStartId = startId
 
         if (AppState.activeMode.value == AppMode.REFRESH) {
-            // You'll need to make telephonyCallback accessible or call a cleanup method
-            lastPokeTime = 0L
+            manageHeartbeat(false) // KILL the tick
             networkMonitor.stopMonitoring()
-            networkMonitor.pokeHardwareOnly()
+            lastPokeTime = System.currentTimeMillis()
             Log.d(tag, "Refresh Mode: Defensive stopMonitoring() called to prevent listener leak.")
         } else if (AppState.activeMode.value == AppMode.MONITORING) {
             // Register persistent listeners for active tracking
             networkMonitor.startMonitoring(Dispatchers.Main.asExecutor(), isNewSession = true)
+            manageHeartbeat(true) // START the tick
         }
 
         return START_STICKY
@@ -226,9 +263,9 @@ class NetworkMonitorService : Service() {
         )
         val isRefreshMode = AppState.activeMode.value == AppMode.REFRESH
         return NotificationCompat.Builder(this, channelId)
-            .setContentText(if (isRefreshMode) "REFRESH - v1.4.4 \\ STABLE" else "MONITOR - v1.4.4 \\ STABLE")
+            .setContentText(if (isRefreshMode) "REFRESH - v1.4.6.1 \\ STABLE" else "MONITOR - v1.4.6.1 \\ STABLE")
             .setSmallIcon(getIconForMode(mode))
-            .setOngoing(!isRefreshMode)
+            .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(Notification.CATEGORY_SERVICE)
@@ -281,8 +318,11 @@ class NetworkMonitorService : Service() {
             // 2. Kill the 'Screen Unlock' task if it's currently waiting
             pendingPokeJob?.cancel()
 
-            // 2. CRITICAL CLEANUP: Unregister the listener to prevent Scenario 3 drain
-            connectivityManager.unregisterNetworkCallback(networkCallback)
+            // 3. Clear the bridge specifically
+            AppState.persistentNetworkCallback?.let {
+                connectivityManager.unregisterNetworkCallback(it)
+                AppState.persistentNetworkCallback = null
+            }
 
             // 3. UNREGISTER the receiver to prevent 'Ghost' duplicates
             if (isReceiverRegistered) {
