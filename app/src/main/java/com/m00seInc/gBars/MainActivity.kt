@@ -65,6 +65,7 @@ object AppState {
     var activeServiceHash: Int = -1
     // THE BRIDGE: Holds the actual hardware listener object across service restarts
     var persistentTelephonyCallback: Any? = null
+    val isServerRunning = mutableStateOf(false)
     var persistentNetworkCallback: ConnectivityManager.NetworkCallback? = null
     fun checkPermissions(context: Context): Boolean {
         val permissions = mutableListOf(
@@ -89,6 +90,7 @@ object AppState {
         val historySnapshot = pokeHistory.toList()
         val logsSnapshot = currentLogs.toList()
         val modeSnapshot = activeMode.value.name
+        val serverSnapshot = isServerRunning.value
 
         persistenceScope.launch {
             // 2. Wait for any other disk operation to finish
@@ -102,6 +104,7 @@ object AppState {
                     prefs.edit().apply {
                         putString("poke_history_json", historyJson)
                         putString("active_mode", modeSnapshot)
+                        putBoolean("server_running_state", serverSnapshot)
                         putString("saved_logs", logsJson)
                         apply()
                     }
@@ -123,7 +126,8 @@ object AppState {
                     Log.d("gBars_RaceCheck", "[Disk Thread] Raw string read from SharedPreferences: $savedMode")
                     activeMode.value = try { AppMode.valueOf(savedMode!!) } catch(e: Exception) { AppMode.MONITORING }
                     Log.d("gBars_RaceCheck", "[Disk Thread] AppState.activeMode adjusted to: ${activeMode.value}")
-
+                    // Recover server setting state
+                    isServerRunning.value = prefs.getBoolean("server_running_state", false)
                     // Load Poke History
                     val historyJson = prefs.getString("poke_history_json", null)
                     Log.d("gBars_Persistence", "Loading History JSON: $historyJson") // DEBUG LOG
@@ -182,6 +186,11 @@ class MainActivity : ComponentActivity() {
         AppState.loadLogsFromPrefs(this) {
             // This runs after the data is loaded
             AppState.isInitialized.value = AppState.checkPermissions(this)
+            // REQUIREMENT 5 & 6: Auto-boot server service on startup if it was left enabled
+            if (AppState.isServerRunning.value) {
+                Log.i("gBars_Boot", "Server persistent state is TRUE. Auto-starting server sentinel.")
+                startStandaloneServerService()
+            }
         }
         setContent {
             GBarsTheme {
@@ -228,6 +237,57 @@ class MainActivity : ComponentActivity() {
 
     fun stopMonitoringService() {
         stopService(Intent(this, NetworkMonitorService::class.java))
+    }
+
+    fun startStandaloneServerService() {
+        val intent = Intent(this, GBarsServerService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
+        else startService(intent)
+    }
+
+    fun stopStandaloneServerService() {
+        stopService(Intent(this, GBarsServerService::class.java))
+    }
+}
+
+// REQUIREMENT 1 & 2: Isolated Server Start Toggle Component
+@Composable
+fun ServerControlSelector() {
+    val isServerRunning by AppState.isServerRunning
+    val context = LocalContext.current
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = "MAC LINK", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(text = "Exposes toggles to Mac SwiftBar", fontSize = 9.sp, color = MaterialTheme.colorScheme.outline)
+        }
+        Switch(
+            checked = isServerRunning,
+            onCheckedChange = { enableServer ->
+                Log.d("gBars_UI", "Server switch manual adjustment requested: $enableServer")
+                AppState.isServerRunning.value = enableServer
+                AppState.saveAppState(context)
+
+                // FIXED: Create the target intent explicitly using the localized layout context wrapper
+                val intent = Intent(context, GBarsServerService::class.java)
+
+                if (enableServer) {
+                    Log.d("gBars_UI", "Direct Handshake: Launching standalone server container intent block.")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(intent)
+                    } else {
+                        context.startService(intent)
+                    }
+                } else {
+                    Log.d("gBars_UI", "Direct Handshake: Halting standalone server container intent block.")
+                    context.stopService(intent)
+                }
+            }
+        )
     }
 }
 
@@ -286,6 +346,8 @@ fun MainDashboard() {
                 AppBranding()
                 Spacer(modifier = Modifier.height(16.dp))
                 ModeSelector()
+                Spacer(modifier = Modifier.height(6.dp))
+                ServerControlSelector() // Injected cleanly below refresh toggle block
                 Spacer(modifier = Modifier.height(12.dp))
                 MonitorButton(
                     isActive = isRunning,
@@ -295,7 +357,7 @@ fun MainDashboard() {
                 )
             }
 
-            Spacer(modifier = Modifier.width(24.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             // Right Side: History
             Column(
@@ -329,14 +391,16 @@ fun MainDashboard() {
             }
             Spacer(modifier = Modifier.height(24.dp))
             ModeSelector()
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(6.dp))
+            ServerControlSelector() // Injected cleanly below refresh toggle block
+            Spacer(modifier = Modifier.height(12.dp))
             MonitorButton(
                 isActive = isRunning,
                 networkMode = currentMode,
                 onToggle = { (context as? MainActivity)?.toggleMonitoring() },
                 modifier = Modifier.height(120.dp)
             )
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = if (AppState.activeMode.value == AppMode.REFRESH) "POKE HISTORY" else "SWITCH HISTORY",
                 modifier = Modifier.align(Alignment.Start).padding(start = 12.dp),
@@ -354,7 +418,7 @@ fun MainDashboard() {
 fun AppBranding() {
     Column(modifier = Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.Start) {
         Text("GBARS", fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 5.sp)
-        Text("V1.4.6.1 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+        Text("V1.4.7.2 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
     }
 }
 

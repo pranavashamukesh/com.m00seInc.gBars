@@ -106,8 +106,14 @@ class NetworkMonitorService : Service() {
                     pendingPokeJob?.cancel()
                     isDeviceUnlocked = false
                     if (AppState.activeMode.value == AppMode.MONITORING) {
-                        networkMonitor.stopMonitoring()
-                        stopUpdateLoop()
+                        // REFINEMENT: If the Mac server link is alive, don't stop the telephony engine
+                        if (AppState.isServerRunning.value) {
+                            Log.i(tag, "Screen Off: Server link is ACTIVE. Keeping live telephony monitor loop spinning.")
+                        } else {
+                            Log.i(tag, "Screen Off: Server link is INACTIVE. Detaching monitor engine to preserve battery.")
+                            networkMonitor.stopMonitoring()
+                            stopUpdateLoop()
+                        }
                     }
                 }
 
@@ -118,9 +124,14 @@ class NetworkMonitorService : Service() {
 
                     // 1. Handle MONITORING Mode separately
                     if (AppState.activeMode.value == AppMode.MONITORING) {
-                        networkMonitor.startMonitoring(Dispatchers.Main.asExecutor(), isNewSession = false)
-                        startUpdateLoop()
-                        Log.d(tag, "Phone Unlocked: Resuming monitoring.")
+                        // REFINEMENT: Skip re-registering listeners if they were kept alive during lock
+                        if (AppState.isServerRunning.value) {
+                            Log.d(tag, "Screen On: Monitor loop was already kept alive by the server link. Skipping redundant registration.")
+                        } else {
+                            Log.i(tag, "Screen On: Server link was down. Re-attaching fresh monitor loops cleanly.")
+                            networkMonitor.startMonitoring(Dispatchers.Main.asExecutor(), isNewSession = false)
+                            startUpdateLoop()
+                        }
                     }
                     // 2. Handle REFRESH Mode separately
                     else {
@@ -263,7 +274,7 @@ class NetworkMonitorService : Service() {
         )
         val isRefreshMode = AppState.activeMode.value == AppMode.REFRESH
         return NotificationCompat.Builder(this, channelId)
-            .setContentText(if (isRefreshMode) "REFRESH - v1.4.6.1 \\ STABLE" else "MONITOR - v1.4.6.1 \\ STABLE")
+            .setContentText(if (isRefreshMode) "REFRESH - v1.4.7.2 \\ STABLE" else "MONITOR - v1.4.7.2 \\ STABLE")
             .setSmallIcon(getIconForMode(mode))
             .setOngoing(true)
             .setSilent(true)
