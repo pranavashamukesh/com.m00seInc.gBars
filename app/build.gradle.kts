@@ -11,8 +11,8 @@ android {
         applicationId = "com.m00seInc.gBars"
         minSdk = 26
         targetSdk = 37
-        versionCode = 44
-        versionName = "1.4.7.2"
+        versionCode = 45
+        versionName = "1.4.7.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

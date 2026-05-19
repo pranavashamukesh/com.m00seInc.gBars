@@ -37,3 +37,10 @@
 
 # 3. Allow system server to access your package info for thermal stats
 -keepattributes *Annotation*, Signature, EnclosingMethod
+
+# Strip out all Debug and Verbose logging statements in the release build
+-assumenosideeffects class android.util.Log {
+    public static int d(...);
+    public static int v(...);
+    public static boolean isLoggable(java.lang.String, int);
+}
