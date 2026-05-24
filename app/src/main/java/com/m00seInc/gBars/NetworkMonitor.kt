@@ -254,6 +254,15 @@ class NetworkMonitor(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Log.d("gBars_Monitor", "TelephonyCallback unregistered and nullified.")
             val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+
+            // FIX 5: Secondary Safeguard — Unregister the local callback reference directly
+            telephonyCallback?.let { localCallback ->
+                try {
+                    telephonyManager.unregisterTelephonyCallback(localCallback)
+                    Log.d("gBars_Monitor", "Local Reference: Hardware listener detached successfully.")
+                } catch (_: Exception) {}
+            }
+
             // 3. ALWAYS unregister the identity stored in the bridge,
             // not just the local one.
             (AppState.persistentTelephonyCallback as? TelephonyCallback)?.let { activeCallback ->

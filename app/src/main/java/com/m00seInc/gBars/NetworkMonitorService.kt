@@ -248,8 +248,10 @@ class NetworkMonitorService : Service() {
             manageHeartbeat(false) // KILL the tick
             networkMonitor.stopMonitoring()
             lastPokeTime = System.currentTimeMillis()
+            updateNotification("Refresh")
             Log.d(tag, "Refresh Mode: Defensive stopMonitoring() called to prevent listener leak.")
         } else if (AppState.activeMode.value == AppMode.MONITORING) {
+            startUpdateLoop()
             // Register persistent listeners for active tracking
             networkMonitor.startMonitoring(Dispatchers.Main.asExecutor(), isNewSession = true)
             manageHeartbeat(true) // START the tick
@@ -273,9 +275,17 @@ class NetworkMonitorService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val isRefreshMode = AppState.activeMode.value == AppMode.REFRESH
+
+        // FIXED: Swaps out the icon to show rotating sync arrows loop when in Refresh Mode
+        val notificationIcon = if (isRefreshMode) {
+            R.drawable.ic_refresh_single
+        } else {
+            getIconForMode(mode)
+        }
+
         return NotificationCompat.Builder(this, channelId)
-            .setContentText(if (isRefreshMode) "REFRESH - v1.4.7.3 \\ STABLE" else "MONITOR - v1.4.7.3 \\ STABLE")
-            .setSmallIcon(getIconForMode(mode))
+            .setContentText(if (isRefreshMode) "REFRESH - v1.4.7.5 \\ STABLE" else "MONITOR - v1.4.7.5 \\ STABLE")
+            .setSmallIcon(notificationIcon)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

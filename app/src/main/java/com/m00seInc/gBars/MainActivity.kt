@@ -186,6 +186,15 @@ class MainActivity : ComponentActivity() {
         AppState.loadLogsFromPrefs(this) {
             // This runs after the data is loaded
             AppState.isInitialized.value = AppState.checkPermissions(this)
+
+            // FIX 6: Cold Start Sanity Defense. Never allow a heavy hardware tracking state
+            // to boot up unchecked if the app was dirty-killed or left in an indeterminate state.
+            if (AppState.activeMode.value == AppMode.MONITORING && !AppState.isServiceRunning.value) {
+                Log.w("gBars_Sanity", "Cold-Boot Validation: Stale MONITORING flag found on disk while service was idle. Resetting to REFRESH baseline.")
+                AppState.activeMode.value = AppMode.REFRESH
+                AppState.saveAppState(this)
+            }
+
             // REQUIREMENT 5 & 6: Auto-boot server service on startup if it was left enabled
             if (AppState.isServerRunning.value) {
                 Log.i("gBars_Boot", "Server persistent state is TRUE. Auto-starting server sentinel.")
@@ -418,7 +427,7 @@ fun MainDashboard() {
 fun AppBranding() {
     Column(modifier = Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.Start) {
         Text("GBARS", fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 5.sp)
-        Text("V1.4.7.3 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+        Text("V1.4.7.5 \\ STABLE", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
     }
 }
 

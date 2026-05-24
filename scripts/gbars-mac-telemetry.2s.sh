@@ -82,22 +82,19 @@ else
 
             case "$NET_LOWER" in
                 *4g*)
-                    DISPLAY_MODE="ᯤ4G | color=orange"
+                    DISPLAY_MODE="ᯤ4G"
                     ;;
                 *5g*)
-                    DISPLAY_MODE="ᯤ5G | color=white"
+                    DISPLAY_MODE="ᯤ5G"
                     ;;
                 *3g*|*hspa*|*umts*)
-                    DISPLAY_MODE="ᯤ3G | color=red"
+                    DISPLAY_MODE="ᯤ3G"
                     ;;
                 *2g*|*edge*|*gprs*)
-                    DISPLAY_MODE="ᯤ2G | color=red"
+                    DISPLAY_MODE="ᯤ2G"
                     ;;
                 *disconnected*|*none*)
-                    DISPLAY_MODE="ᯤ📵 | color=red"
-                    ;;
-                *other*|*none*)
-                    DISPLAY_MODE="ᯤ❓"
+                    DISPLAY_MODE="ᯤ📵"
                     ;;
                 *)
                     # Fallback to the raw string if an unexpected signature passes through
