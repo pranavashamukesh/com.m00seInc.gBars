@@ -32,7 +32,7 @@ class GBarsServerService : Service() {
     private var connectionWorkerJob: Job? = null
 
     // REFINEMENT: Heartbeat job container for the 5-second refresh cycle
-    private var heartbeatJob: Job? = null
+    //private var heartbeatJob: Job? = null
 
     private var isReceiverRegistered = false
 
@@ -56,7 +56,7 @@ class GBarsServerService : Service() {
                             "Hotspot State: [ACTIVE]. Spinning up server sockets & tracking loops."
                         )
                         startSocketEngine()
-                        startHeartbeatLoop()
+                        updateServerStatus("ACTIVE")
                     }
 
                     10, 11, 12, 14 -> { // Disabling, Disabled, Enabling, Failed
@@ -65,16 +65,10 @@ class GBarsServerService : Service() {
                             "Hotspot State: [INACTIVE / CHANGING]. Placing server on standby hold."
                         )
                         stopSocketEngineOnly()
-                        stopHeartbeatLoopOnly()
                         // FIX 2: Explicitly kill the NetworkMonitorService so its modem callbacks aren't left stranded when the hotspot drops
                         stopService(Intent(applicationContext, NetworkMonitorService::class.java))
                         // FIXED: Post standby state message immediately to the status tray
-                        val notificationManager =
-                            getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                        notificationManager.notify(
-                            notificationId,
-                            buildServerNotification("STANDBY")
-                        )
+                        updateServerStatus("STANDBY")
                     }
                 }
             }
@@ -98,25 +92,19 @@ class GBarsServerService : Service() {
                     "Startup Validation: Hotspot verified [ACTIVE]. Initializing socket engines."
                 )
                 startSocketEngine()
-                startHeartbeatLoop()
+                updateServerStatus("ACTIVE")
             } else {
                 Log.i(
                     tag,
                     "Startup Validation: Hotspot verified [INACTIVE]. Shifting to standby constraint."
                 )
-                buildServerNotification("STANDBY")
+                updateServerStatus("STANDBY")
             }
         } catch (e: Exception) {
             Log.e(tag, "Startup Scan Failure: Global state reading error: ${e.message}")
             // Fail-safe fallback to standalone message state
-            buildServerNotification("STANDBY")
+            updateServerStatus("STANDBY")
         }
-    }
-
-    private fun stopHeartbeatLoopOnly() {
-        Log.d(tag, "Heartbeat Engine: Halting background update timers.")
-        heartbeatJob?.cancel()
-        heartbeatJob = null
     }
 
     private fun stopSocketEngineOnly() {
@@ -174,7 +162,7 @@ class GBarsServerService : Service() {
     }
 
     // REFINEMENT: Continuous 5-second visual heartbeat and thread persistence loop
-    private fun startHeartbeatLoop() {
+    /*private fun startHeartbeatLoop() {
         Log.d(tag, "Heartbeat Engine: Launching 5-second notification refresh loop.")
         heartbeatJob?.cancel()
         heartbeatJob = serviceScope.launch {
@@ -196,6 +184,10 @@ class GBarsServerService : Service() {
                 notificationManager.notify(notificationId, buildServerNotification(statusMessage))
             }
         }
+    }*/
+    private fun updateServerStatus(status: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(notificationId, buildServerNotification(status))
     }
 
     private fun startSocketEngine() {
@@ -230,7 +222,12 @@ class GBarsServerService : Service() {
                         tag,
                         "Socket Engine Timeout: No active Mac connections detected. Self-terminating engine to drop battery baseline."
                     )
-                    withContext(Dispatchers.Main) { stopSelf() }
+                    withContext(Dispatchers.Main) {
+                        // FIXED: Replaced stand-alone stopSelf() to cleanly update notification UI first
+                        updateServerStatus("STANDBY")
+                        stopSelf()
+                    }
+                    break
                 } catch (e: java.net.SocketException) {
                     // FIXED: Catch intentional shutdowns quietly without throwing a full error log dump
                     if (!isActive || !AppState.isServerRunning.value) {
@@ -420,7 +417,7 @@ class GBarsServerService : Service() {
 
         return NotificationCompat.Builder(this, channelId)
             //.setContentTitle("gBars Remote Server Link")
-            .setContentText("MAC LINK " + status + " - v1.4.7.5 \\ STABLE")
+            .setContentText("MAC LINK " + status + " - v1.4.8.0 \\ STABLE")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentIntent(pendingIntent) // FIXED: Binds the tap intent action
             .setOngoing(true)

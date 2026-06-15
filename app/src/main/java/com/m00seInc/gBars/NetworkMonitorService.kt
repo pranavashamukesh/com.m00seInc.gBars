@@ -16,11 +16,11 @@ import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import android.telephony.TelephonyManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.telephony.TelephonyManager
 import kotlinx.coroutines.cancelChildren
 
 class NetworkMonitorService : Service() {
@@ -48,7 +48,7 @@ class NetworkMonitorService : Service() {
     private var isCellularDataActive = false
 
     private var lastPokeTime = 0L
-    private val REFRESH_COOLDOWN_MS = 3_600_000L // 1 Hour
+    private val REFRESH_COOLDOWN_MS = 7_200_000L // 1 Hour
     //private val REFRESH_COOLDOWN_MS = 60_000L // 30 sec for testing
     private var heartbeatJob: Job? = null
 
@@ -67,7 +67,7 @@ class NetworkMonitorService : Service() {
                         return@launch
                     }
                     if (isDeviceUnlocked) {
-                        networkMonitor.checkInitialState()
+                        //networkMonitor.checkInitialState()
                         updateNotification(lastKnownMode)
                         Log.d(tag, "Heartbeat Loop: Active.")
                     }
@@ -137,23 +137,31 @@ class NetworkMonitorService : Service() {
                     else {
                         if ((currentTime - lastPokeTime > REFRESH_COOLDOWN_MS)) {
                             if (pendingPokeJob?.isCompleted ?: true) {
+                                // LOCK GATES IMMEDIATELY: Prevents rapid successive unlocks from spawning duplicate threads
+                                lastPokeTime = currentTime
+
                                 pendingPokeJob = serviceScope.launch {
                                     delay(2000)
                                     if (!isDeviceUnlocked) return@launch
-                                    if (isCellularDataActive) {
+
+                                    // JUST-IN-TIME HARDWARE EXTRACTION: Hit the hardware directly on-demand
+                                    val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                                    val isCurrentlyConnected = telephonyManager.dataState == TelephonyManager.DATA_CONNECTED
+
+                                    if (isCurrentlyConnected) {
                                         networkMonitor.pokeHardwareOnly()
-                                        lastPokeTime = System.currentTimeMillis()
-                                        AppState.recordPoke(applicationContext,java.text.SimpleDateFormat(
+                                        AppState.recordPoke(applicationContext, java.text.SimpleDateFormat(
                                             "dd/MM/yyyy HH:mm:ss",
                                             java.util.Locale.getDefault()
                                         ).format(java.util.Date()))
-                                        Log.d(tag, "MODEM poked @ $lastPokeTime")
+                                        Log.d(tag, "MODEM poked via JIT Telephony check @ $lastPokeTime")
+                                    } else {
+                                        Log.d(tag, "JIT Check: Cellular data offline/disabled. Poke safely skipped for this hour window.")
                                     }
-                                    else Log.d(tag, "cellular data disabled @ $lastPokeTime")
                                 }
                             }
                         } else {
-                            // SILENCE: Cooldown is active, do absolutely nothing.
+                            // FAST EARLY EXIT: Rapid consecutive unlocks execute this block in under 5 microseconds
                             Log.d(tag, "Refresh: Cooldown active. Next poke in ${ (REFRESH_COOLDOWN_MS - (currentTime - lastPokeTime)) / 60_000 }m")
                         }
                     }
@@ -246,13 +254,33 @@ class NetworkMonitorService : Service() {
 
         if (AppState.activeMode.value == AppMode.REFRESH) {
             manageHeartbeat(false) // KILL the tick
-            networkMonitor.stopMonitoring()
+            stopUpdateLoop()
+            networkMonitor.stopMonitoring() // Tears down heavy tracking loops
             lastPokeTime = System.currentTimeMillis()
+
+            // Unregister the chatty ConnectivityManager background callback to secure pure standby silence
+            try {
+                AppState.persistentNetworkCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
+                connectivityManager.unregisterNetworkCallback(networkCallback)
+            } catch (_: Exception) {}
+            AppState.persistentNetworkCallback = null
+
+            // NOTE: ContentObserver registration omitted here. Zero background listeners active.
+
             updateNotification("Refresh")
-            Log.d(tag, "Refresh Mode: Defensive stopMonitoring() called to prevent listener leak.")
+            Log.d(tag, "Refresh Mode: All background listeners stripped. System on-demand JIT mode active.")
         } else if (AppState.activeMode.value == AppMode.MONITORING) {
+            try {
+                if (AppState.persistentNetworkCallback == null) {
+                    val request = NetworkRequest.Builder()
+                        .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+                        .build()
+                    connectivityManager.registerNetworkCallback(request, networkCallback)
+                    AppState.persistentNetworkCallback = networkCallback
+                }
+            } catch (_: Exception) {}
+
             startUpdateLoop()
-            // Register persistent listeners for active tracking
             networkMonitor.startMonitoring(Dispatchers.Main.asExecutor(), isNewSession = true)
             manageHeartbeat(true) // START the tick
         }
@@ -284,7 +312,7 @@ class NetworkMonitorService : Service() {
         }
 
         return NotificationCompat.Builder(this, channelId)
-            .setContentText(if (isRefreshMode) "REFRESH - v1.4.7.5 \\ STABLE" else "MONITOR - v1.4.7.5 \\ STABLE")
+            .setContentText(if (isRefreshMode) "REFRESH - v1.4.8.0 \\ STABLE" else "MONITOR - v1.4.8.0 \\ STABLE")
             .setSmallIcon(notificationIcon)
             .setOngoing(true)
             .setSilent(true)
@@ -323,32 +351,23 @@ class NetworkMonitorService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        // 1. FORCE removal of the notification tray entry immediately
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
-        // FIX: Wrap in try-catch to prevent a crash if the Android OS
-        // already forcefully detached the receiver during a swipe-away kill.
         try {
-            // 1. Stop the loop so the CPU stops 'ticking'
             stopUpdateLoop()
-
-            // 2. Kill the 'Screen Unlock' task if it's currently waiting
             pendingPokeJob?.cancel()
 
-            // 3. Clear the bridge specifically
             AppState.persistentNetworkCallback?.let {
                 connectivityManager.unregisterNetworkCallback(it)
                 AppState.persistentNetworkCallback = null
             }
 
-            // 3. UNREGISTER the receiver to prevent 'Ghost' duplicates
             if (isReceiverRegistered) {
                 unregisterReceiver(lockStateReceiver)
-                //unregisterNetworkCallback(networkCallback)
                 isReceiverRegistered = false
             }
         } catch (e: IllegalArgumentException) {
